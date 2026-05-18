@@ -1,0 +1,32 @@
+version: "3.8"
+
+# offline-thinking 전용 PostgreSQL
+# 사용법: docker compose -f docker-compose.db.yml up -d
+# 포트: 54399 (dho Supabase 54322과 충돌 없음)
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: offline_thinking_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: offline_thinking
+    ports:
+      - "54399:5432"
+    volumes:
+      - offline_thinking_db_data:/var/lib/postgresql/data
+      - ./api/migrations/init_schema.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./api/migrations/add_ocr_columns.sql:/docker-entrypoint-initdb.d/02_ocr.sql:ro
+      - ./api/migrations/add_upload_date.sql:/docker-entrypoint-initdb.d/03_upload_date.sql:ro
+      - ./api/migrations/add_qa_quota.sql:/docker-entrypoint-initdb.d/04_qa_quota.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  offline_thinking_db_data:
+    name: offline_thinking_db_data
