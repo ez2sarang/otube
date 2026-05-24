@@ -59,7 +59,7 @@ def semantic_search(
             1 - (t.embedding <=> %s::vector) AS score,
             SUBSTRING(t.full_text, 1, 200) AS snippet
         FROM stt_analysis.transcripts t
-        JOIN stt_analysis.videos v ON t.video_id = v.video_id
+        JOIN stt_analysis.videos v ON t.video_id = v.id
     """
     params = [str(query_embedding)]  # pgvector는 string으로 변환 필요
 
@@ -112,7 +112,7 @@ def rag_answer(
         f"""
         SELECT t.video_id, v.title, t.full_text
         FROM stt_analysis.transcripts t
-        JOIN stt_analysis.videos v ON t.video_id = v.video_id
+        JOIN stt_analysis.videos v ON t.video_id = v.id
         WHERE t.video_id IN ({placeholders})
         """,
         tuple(video_ids),
