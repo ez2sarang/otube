@@ -5,32 +5,32 @@ from enum import Enum
 
 from langgraph.graph import StateGraph, END
 from langgraph.types import Send
-from langchain_anthropic import ChatAnthropic
 from langchain.tools import tool
 from langchain_core.messages import HumanMessage, AIMessage
 
 from db import query
 import embed
+import llm_gateway
 
-# 상태 정의 (LangGraph 호환)
+
 class AgentState(dict):
-    """에이전트 상태"""
     pass
 
 
 class GradeEnum(str, Enum):
-    """답변 품질 판정"""
     GOOD = "good"
     RETRY = "retry"
 
 
-# LLM 초기화
-def get_llm():
-    """Claude LLM 클라이언트"""
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY not set")
-    return ChatAnthropic(model="claude-3-5-sonnet-20241022", api_key=api_key)
+def _call_llm(prompt: str, model: str = "sonnet") -> str:
+    """llm_gateway를 통한 Claude 호출 (Claude CLI 폴백 포함)"""
+    result = llm_gateway.call_llm(
+        task="당신은 영상 분석 어시스턴트입니다. 제공된 정보를 기반으로 정확하게 답변하세요.",
+        text=prompt,
+        model=model,
+        timeout=60,
+    )
+    return result or "답변을 생성할 수 없습니다."
 
 
 # --- Tools ---
@@ -95,11 +95,13 @@ def get_transcript(video_id: str) -> str:
 
 def retrieve_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """검색 노드: 질문과 관련된 영상 찾기"""
+    from rag_pipeline import semantic_search
     question = state.get("question", "")
     channel = state.get("channel")
+    playlist_id = state.get("playlist_id")
 
-    # 의미론적 검색
-    search_results = search_videos(question, channel=channel, top_k=10)
+    # 의미론적 검색 (rag_pipeline 직접 호출)
+    search_results = semantic_search(question, top_k=10, channel=channel, playlist_id=playlist_id)
 
     if not search_results:
         state["retrieved_docs"] = []
@@ -141,10 +143,7 @@ def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
         [f"[{doc['title']}]\n{doc['content']}" for doc in retrieved_docs]
     )
 
-    # Claude로 답변 생성
-    llm = get_llm()
-    prompt = f"""당신은 영상 분석 어시스턴트입니다.
-제공된 영상 스크립트를 기반으로 사용자의 질문에 정확하게 답변하세요.
+    prompt = f"""제공된 영상 스크립트를 기반으로 질문에 정확하게 답변하세요.
 
 <context>
 {context}
@@ -153,9 +152,7 @@ def generate_node(state: Dict[str, Any]) -> Dict[str, Any]:
 질문: {question}
 
 답변:"""
-
-    response = llm.invoke([HumanMessage(content=prompt)])
-    state["answer"] = response.content
+    state["answer"] = _call_llm(prompt)
     state["generation_attempts"] = state.get("generation_attempts", 0) + 1
 
     return state
@@ -172,8 +169,6 @@ def grade_node(state: Dict[str, Any]) -> Dict[str, Any]:
         state["grade"] = GradeEnum.GOOD
         return state
 
-    # Claude로 답변 품질 평가
-    llm = get_llm()
     grade_prompt = f"""사용자 질문: {question}
 
 생성된 답변: {answer}
@@ -182,9 +177,7 @@ def grade_node(state: Dict[str, Any]) -> Dict[str, Any]:
 응답은 다음 중 하나만: "good" 또는 "retry"
 
 판정:"""
-
-    response = llm.invoke([HumanMessage(content=grade_prompt)])
-    grade_text = response.content.strip().lower()
+    grade_text = _call_llm(grade_prompt, model="haiku").strip().lower()
 
     if "retry" in grade_text or "부족" in grade_text:
         state["grade"] = GradeEnum.RETRY

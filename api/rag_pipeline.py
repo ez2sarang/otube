@@ -3,27 +3,19 @@ import os
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-from langchain_anthropic import ChatAnthropic
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
 
 import embed
+import llm_gateway
 from db import query, query_one
 
-# LLM 클라이언트 (lazy init)
-_llm = None
 
-
-def get_llm():
-    """Claude Anthropic LLM 클라이언트 lazy load"""
-    global _llm
-    if _llm is None:
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY not set")
-        _llm = ChatAnthropic(model="claude-3-5-sonnet-20241022", api_key=api_key)
-    return _llm
+def _call_llm_gateway(prompt_text: str, model: str = "sonnet") -> str:
+    """llm_gateway를 통한 LLM 호출 (Claude CLI 폴백 포함)"""
+    task = "당신은 영상 분석 어시스턴트입니다. 제공된 컨텍스트를 기반으로 정확하게 답변하세요."
+    result = llm_gateway.call_llm(task=task, text=prompt_text, model=model, timeout=60)
+    return result or "답변을 생성할 수 없습니다."
 
 
 def semantic_search(
@@ -131,10 +123,9 @@ def rag_answer(
         )
     context = "\n\n".join(context_parts)
 
-    # RAG 프롬프트
+    # LangChain 프롬프트 템플릿으로 포맷 후 llm_gateway 호출
     rag_prompt = ChatPromptTemplate.from_template(
-        """당신은 영상 분석 어시스턴트입니다.
-제공된 영상 스크립트를 기반으로 사용자의 질문에 정확하게 답변하세요.
+        """제공된 영상 스크립트를 기반으로 질문에 정확하게 답변하세요.
 
 <context>
 {context}
@@ -144,18 +135,9 @@ def rag_answer(
 
 답변:"""
     )
-
-    # LCEL 체인 구성
-    chain = (
-        {"context": RunnablePassthrough(), "question": RunnablePassthrough()}
-        | rag_prompt
-        | get_llm()
-        | StrOutputParser()
-    )
-
-    # 답변 생성 (context와 question을 분리하여 전달)
-    answer = chain.invoke({"context": context, "question": question})
-    return answer
+    formatted = rag_prompt.format_messages(context=context, question=question)
+    prompt_text = "\n".join(m.content for m in formatted)
+    return _call_llm_gateway(prompt_text, model="sonnet")
 
 
 def extract_qa_pair(answer_text: str, question: str) -> Dict[str, str]:
