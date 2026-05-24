@@ -78,7 +78,7 @@ async def search(
                 v.channel,
                 SUBSTRING(t.full_text, 1, 150) AS snippet
             FROM stt_analysis.transcripts t
-            JOIN stt_analysis.videos v ON t.video_id = v.video_id
+            JOIN stt_analysis.videos v ON t.video_id = v.id
             WHERE t.full_text ILIKE %s
         """
         params = [f"%{q}%"]

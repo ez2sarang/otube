@@ -108,6 +108,23 @@ async def startup_cleanup():
 
 # --- API 엔드포인트 ---
 
+@app.get("/api/tasks/{task_id}")
+async def get_task_status(task_id: str):
+    from fastapi.responses import JSONResponse
+    task = task_manager.get_task(task_id)
+    if not task:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Not Found")
+    return {
+        "task_id": task.task_id,
+        "status": task.status.value,
+        "message": task.message,
+        "progress": task.progress,
+        "result": task.result,
+        "error": task.error,
+    }
+
+
 @app.get("/api/tasks/{task_id}/events")
 async def task_events(task_id: str):
     return StreamingResponse(

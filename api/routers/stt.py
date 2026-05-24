@@ -36,8 +36,10 @@ async def transcribe_youtube(req: YoutubeRequest):
         duration_sec = 0
         upload_date = None
         try:
+            cdp_profile = "/tmp/chrome-cdp-gdrive"
+            cookie_args = ["--cookies-from-browser", f"chrome:{cdp_profile}"] if os.path.exists(cdp_profile) else ["--cookies-from-browser", "chrome"]
             meta_result = subprocess.run(
-                ["yt-dlp", "--cookies-from-browser", "chrome",
+                ["yt-dlp"] + cookie_args + [
                  "--print", "%(title)s|%(channel)s|%(duration)s|%(upload_date)s", "--no-download", url],
                 capture_output=True, text=True, timeout=30,
             )
