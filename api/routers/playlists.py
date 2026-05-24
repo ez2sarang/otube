@@ -248,123 +248,115 @@ async def remove_video_from_playlist(playlist_id: str, video_id: str):
 
 @router.post("/playlists/import-youtube")
 async def import_youtube_playlists(req: dict):
-    """YouTube courses URL에서 플레이리스트 자동 임포트
-    
+    """YouTube courses/playlists URL에서 플레이리스트 자동 임포트 (2-pass)
+
     Body: {
         "url": "https://www.youtube.com/@channel/courses",
-        "channel": "채널 이름"
+        "channel": "채널 이름",
+        "cookie_profile": "/tmp/chrome-cdp-gdrive"  // 선택
     }
     """
-    url = req.get("url")
-    channel = req.get("channel")
-    
+    url = req.get("url", "")
+    channel = req.get("channel", "")
+    cookie_profile = req.get("cookie_profile", "")
+
     if not url or not channel:
         raise HTTPException(status_code=400, detail="url and channel required")
-    
+
+    def yt_cmd(extra: list) -> list:
+        base = ["yt-dlp", "--flat-playlist"]
+        if cookie_profile:
+            base += ["--cookies-from-browser", f"chrome:{cookie_profile}"]
+        else:
+            base += ["--cookies-from-browser", "chrome:/tmp/chrome-cdp-gdrive"]
+        return base + extra
+
     try:
-        # yt-dlp로 플레이리스트 정보 추출
-        cmd = [
-            "yt-dlp",
-            "--flat-playlist",
-            "--print", "%(playlist_id)s|%(playlist_title)s|%(id)s|%(title)s|%(thumbnail)s",
-            url,
-        ]
-        
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        if result.returncode != 0:
-            raise HTTPException(status_code=400, detail=f"yt-dlp error: {result.stderr}")
-        
-        # 출력 파싱: playlist_id|playlist_title|video_id|video_title|thumbnail
-        lines = result.stdout.strip().split("\n")
-        
-        # 플레이리스트별로 그룹화
-        playlists_dict = {}
-        for line in lines:
-            if not line.strip():
-                continue
-            
+        # Pass 1: courses/playlists 탭에서 플레이리스트 목록 추출
+        # --flat-playlist 시 %(id)s = 플레이리스트ID, %(title)s = 플레이리스트명
+        r1 = subprocess.run(
+            yt_cmd(["--print", "%(id)s|%(title)s|%(thumbnail)s", url]),
+            capture_output=True, text=True, timeout=120
+        )
+        playlists_raw = []
+        for line in r1.stdout.strip().splitlines():
             parts = line.split("|")
-            if len(parts) < 5:
+            if len(parts) < 2 or not parts[0].startswith("PL"):
                 continue
-            
-            playlist_id, playlist_title, video_id, video_title, thumbnail = parts[0], parts[1], parts[2], parts[3], parts[4]
-            
-            if not playlist_id or not video_id:
-                continue
-            
-            if playlist_id not in playlists_dict:
-                playlists_dict[playlist_id] = {
-                    "title": playlist_title,
-                    "videos": [],
-                }
-            
-            playlists_dict[playlist_id]["videos"].append({
-                "id": video_id,
-                "title": video_title,
-                "thumbnail": thumbnail,
-            })
-        
-        # DB에 플레이리스트 및 영상 저장
+            pl_id = parts[0]
+            pl_title = parts[1]
+            pl_thumb = parts[2] if len(parts) > 2 else ""
+            playlists_raw.append({"id": pl_id, "title": pl_title, "thumbnail": pl_thumb})
+
+        if not playlists_raw:
+            raise HTTPException(status_code=400, detail="플레이리스트를 찾을 수 없습니다. URL을 확인하세요.")
+
         created_count = 0
-        for yt_playlist_id, playlist_data in playlists_dict.items():
-            db_playlist_id = str(uuid.uuid4())
-            
-            # 플레이리스트 정보 저장 (ID 충돌 방지)
-            existing = query_one(
+        updated_count = 0
+
+        for pl in playlists_raw:
+            yt_pl_id = pl["id"]
+            pl_title = pl["title"]
+            pl_thumb = pl["thumbnail"]
+            pl_url = f"https://www.youtube.com/playlist?list={yt_pl_id}"
+
+            # DB 플레이리스트 조회 or 생성
+            existing_pl = query_one(
                 "SELECT id FROM stt_analysis.playlists WHERE youtube_playlist_id = %s AND channel = %s",
-                (yt_playlist_id, channel),
+                (yt_pl_id, channel),
             )
-            
-            if existing:
-                db_playlist_id = existing["id"]
+            if existing_pl:
+                db_pl_id = existing_pl["id"]
+                updated_count += 1
             else:
+                db_pl_id = str(uuid.uuid4())
                 execute(
-                    "INSERT INTO stt_analysis.playlists (id, title, description, channel, youtube_playlist_id, item_count) "
-                    "VALUES (%s, %s, %s, %s, %s, %s) "
-                    "ON CONFLICT DO NOTHING",
-                    (
-                        db_playlist_id,
-                        playlist_data["title"],
-                        "",
-                        channel,
-                        yt_playlist_id,
-                        len(playlist_data["videos"]),
-                    ),
+                    "INSERT INTO stt_analysis.playlists "
+                    "(id, title, description, channel, source_url, thumbnail, youtube_playlist_id, item_count) "
+                    "VALUES (%s, %s, '', %s, %s, %s, %s, 0)",
+                    (db_pl_id, pl_title, channel, pl_url, pl_thumb, yt_pl_id),
                 )
                 created_count += 1
-            
-            # 영상별 데이터 저장 및 플레이리스트 연결
-            position = 1
-            for video_data in playlist_data["videos"]:
-                video_id = video_data["id"]
-                
-                # 영상이 DB에 있는지 확인
-                video = query_one(
-                    "SELECT id FROM stt_analysis.videos WHERE id = %s",
-                    (video_id,),
+
+            # Pass 2: 해당 플레이리스트 내 영상 목록
+            r2 = subprocess.run(
+                yt_cmd(["--print", "%(id)s", pl_url]),
+                capture_output=True, text=True, timeout=60
+            )
+            video_ids = [v.strip() for v in r2.stdout.strip().splitlines() if v.strip() and not v.startswith("PL")]
+
+            # DB에 있는 영상만 연결 (없는 건 스킵)
+            linked = 0
+            for pos, vid_id in enumerate(video_ids, 1):
+                exists = query_one("SELECT id FROM stt_analysis.videos WHERE id = %s", (vid_id,))
+                if not exists:
+                    continue
+                already = query_one(
+                    "SELECT video_id FROM stt_analysis.video_playlists WHERE video_id=%s AND playlist_id=%s",
+                    (vid_id, db_pl_id),
                 )
-                
-                if video:
-                    # video_playlists에 이미 있는지 확인
-                    existing_link = query_one(
-                        "SELECT video_id FROM stt_analysis.video_playlists WHERE video_id = %s AND playlist_id = %s",
-                        (video_id, db_playlist_id),
+                if not already:
+                    execute(
+                        "INSERT INTO stt_analysis.video_playlists (video_id, playlist_id, position) VALUES (%s, %s, %s)",
+                        (vid_id, db_pl_id, pos),
                     )
-                    
-                    if not existing_link:
-                        execute(
-                            "INSERT INTO stt_analysis.video_playlists (video_id, playlist_id, position) VALUES (%s, %s, %s)",
-                            (video_id, db_playlist_id, position),
-                        )
-                    position += 1
-        
+                linked += 1
+
+            execute(
+                "UPDATE stt_analysis.playlists SET item_count = %s, updated_at = NOW() WHERE id = %s",
+                (linked, db_pl_id),
+            )
+
         return {
             "ok": True,
             "playlists_created": created_count,
-            "playlists_total": len(playlists_dict),
+            "playlists_updated": updated_count,
+            "playlists_total": len(playlists_raw),
         }
-    
+
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=500, detail="yt-dlp timeout")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"import failed: {str(e)}")
