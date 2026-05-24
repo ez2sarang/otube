@@ -146,6 +146,91 @@ GET /api/search?q=keyword&mode=semantic&top_k=10&channel=...&playlist_id=...
 
 ---
 
+## LangGraph 멀티스텝 에이전트
+
+### LangGraph란?
+
+LangChain이 만든 **상태 기반 AI 워크플로우 프레임워크**입니다.
+일반 RAG(검색 → 답변 1회)와 달리, LangGraph는 노드(Node)와 엣지(Edge)로 구성된
+그래프 구조를 정의하여 **조건에 따라 다시 시도하거나 분기**할 수 있습니다.
+
+> RAG와의 차이:
+> - **RAG**: 검색 → 답변 생성 → 끝 (1회성, 빠름)
+> - **LangGraph**: 검색 → 답변 생성 → 품질 평가 → 부족하면 재시도 (반복, 정확함)
+
+---
+
+### 이 프로젝트에서의 구조
+
+파일: `api/agent_graph.py`
+
+```
+[retrieve] → [generate] → [grade] → GOOD → END
+                 ↑            |
+                 └── RETRY ───┘  (최대 3회)
+```
+
+**노드별 역할:**
+
+| 노드 | 역할 | 사용 모델 |
+|------|------|---------|
+| `retrieve` | pgvector로 질문과 관련된 영상 상위 10개 검색 → 상위 5개 트랜스크립트 수집 | — (DB 검색) |
+| `generate` | 수집된 트랜스크립트를 컨텍스트로 LLM에게 답변 생성 요청 | Claude Sonnet |
+| `grade` | 생성된 답변이 질문에 충분히 답했는지 LLM이 평가 ("good" / "retry") | Claude Haiku |
+
+**조건부 엣지:**
+- `grade → "good"` → 그래프 종료, 답변 반환
+- `grade → "retry"` → `retrieve` 노드로 돌아가 재시도 (최대 3회, 이후 강제 종료)
+
+---
+
+### API 엔드포인트
+
+```
+POST /api/agent/ask
+```
+
+**Body:**
+```json
+{
+  "question": "비트코인 자동매매 시스템의 핵심 3요소는?",
+  "channel": "조코딩 JoCoding"
+}
+```
+
+※ **channel**: 검색 범위를 특정 채널로 제한. 생략 시 전체 영상 대상.
+※ **응답 방식**: SSE 스트리밍 (연결 유지하며 실시간 진행 상황 수신)
+
+**SSE 이벤트 흐름:**
+```
+data: {"status": "searching", "message": "영상 검색 중..."}
+data: {"status": "generating", "message": "답변 생성 중..."}
+data: {"status": "complete", "result": {"answer": "...", "video_ids": [...], "retrieved_docs": [...]}}
+```
+
+**curl 예시:**
+```bash
+curl -X POST http://localhost:9102/api/agent/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "GPT 자동매매 핵심 구조는?", "channel": "조코딩 JoCoding"}'
+```
+
+**응답 시간:** 약 150~200초 (retrieve + generate + grade 각 ~60초 타임아웃)
+
+---
+
+### RAG vs LangGraph 비교
+
+| 항목 | RAG (`/api/rag/ask`) | LangGraph (`/api/agent/ask`) |
+|------|---------------------|------------------------------|
+| 흐름 | 검색 → 생성 (1회) | 검색 → 생성 → 평가 → 재시도 |
+| 응답 속도 | ~90~110초 | ~150~200초 |
+| 답변 품질 | 단순 참고 기반 | 자기 평가로 품질 보장 |
+| 사용 권장 | 빠른 답변이 필요할 때 | 정확도가 중요한 복잡한 질문 |
+| playlist_id 지원 | ✅ | ❌ (channel만 지원) |
+
+---
+
 ## Slides
 
 ### List Video Slides
