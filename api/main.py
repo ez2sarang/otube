@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 import llm_gateway
-from routers import stt, collections, share, tasks, batch_slides, slides, qa
+from routers import stt, collections, share, tasks, batch_slides, slides, qa, playlists
 from services.task_manager import task_manager
 
 app = FastAPI(title="Offline Thinking API")
@@ -43,6 +43,7 @@ app.include_router(tasks.router)
 app.include_router(batch_slides.router)
 app.include_router(slides.router)
 app.include_router(qa.router)
+app.include_router(playlists.router)
 
 
 # --- 임시 파일 자동 정리 ---
