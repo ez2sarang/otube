@@ -1,5 +1,9 @@
 -- stt_analysis 스키마 초기 생성
 -- 실행: psql -h localhost -p 54322 -U postgres -d postgres -f migrations/init_schema.sql
+--
+-- ⚠️ 레거시 경고: 이 파일의 스키마명 'stt_analysis'는 구버전 이름이다.
+-- 새 테이블/마이그레이션은 반드시 'offline_thinking' 스키마를 사용할 것.
+-- 이 파일을 보고 stt_analysis를 컨벤션으로 착각하지 말 것.
 
 CREATE SCHEMA IF NOT EXISTS stt_analysis;
 
