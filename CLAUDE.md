@@ -87,6 +87,7 @@ app/
 - 새 테이블/마이그레이션 → 반드시 `offline_thinking.*`
 - `init_schema.sql`의 `stt_analysis`는 레거시 이름 — 따라 쓰지 말 것
 - 스키마 불명확하면 추측 금지, 사용자에게 확인
+- `offline_thinking` 스키마가 DB에 없으면 → `CREATE SCHEMA IF NOT EXISTS offline_thinking;` 후 작업 (귀찮다고 다른 스키마 사용 금지)
 
 ---
 
