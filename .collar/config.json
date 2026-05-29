@@ -1,0 +1,14 @@
+{
+  "watchdog": {
+    "ctx_percent_threshold": 80,
+    "ctx_percent_target": 15,
+    "message_threshold": 20,
+    "auto_compact": true,
+    "notify": true
+  },
+  "github": {
+    "enabled": false,
+    "auto_fix_bugs": false,
+    "auto_create_pr": false
+  }
+}
