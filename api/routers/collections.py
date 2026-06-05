@@ -142,16 +142,17 @@ async def create_collection(req: BatchRequest):
         task.update(TaskStatus.RUNNING, "영상 목록 스캔 중...", 5)
         probe_result = subprocess.run(
             ["yt-dlp", "--cookies-from-browser", "chrome", "--flat-playlist",
-             "--print", "%(id)s|%(title)s|%(duration)s|%(upload_date)s",
+             "--print", "%(id)s\t%(title)s\t%(duration)s\t%(upload_date)s",
              url],
             capture_output=True, text=True, timeout=300
         )
 
         videos = []
         for line in probe_result.stdout.strip().split("\n"):
-            parts = line.strip().split("|")
+            parts = line.split("\t")
             if len(parts) >= 3:
-                dur = float(parts[2]) if parts[2] and parts[2] != "NA" else 0
+                dur_str = parts[2].strip()
+                dur = float(dur_str) if dur_str and dur_str != "NA" else 0
                 if dur >= min_duration:
                     if title_filter and title_filter not in parts[1]:
                         continue
