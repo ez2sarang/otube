@@ -2,7 +2,6 @@
 export const dynamic = 'force-dynamic';
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { API_BASE } from "@/lib/types";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Search, Images, ExternalLink } from "lucide-react";
@@ -21,6 +20,7 @@ interface SearchResult {
   title: string;
   slide_index: number;
   filename: string;
+  image_url: string;
   time_str: string;
   ocr_text: string;
   match_excerpt: string;
@@ -34,7 +34,7 @@ export default function SlidesPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/slides`)
+    fetch("/api/slides")
       .then((r) => r.json())
       .then(setVideos)
       .finally(() => setLoading(false));
@@ -48,7 +48,7 @@ export default function SlidesPage() {
     const timer = setTimeout(async () => {
       setSearching(true);
       try {
-        const r = await fetch(`${API_BASE}/api/slides/search?q=${encodeURIComponent(query)}`);
+        const r = await fetch(`/api/slides/search?q=${encodeURIComponent(query)}`);
         setSearchResults(await r.json());
       } finally {
         setSearching(false);
@@ -96,11 +96,14 @@ export default function SlidesPage() {
               href={`/slides/${r.vid_id}?slide=${r.slide_index}`}
               className="flex gap-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors"
             >
-              <img
-                src={`${API_BASE}/api/slides/${r.vid_id}/image/${r.filename}`}
-                alt={`slide ${r.slide_index}`}
-                className="w-24 h-14 object-cover rounded shrink-0 bg-zinc-100"
-              />
+              {r.image_url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={r.image_url}
+                  alt={`slide ${r.slide_index}`}
+                  className="w-24 h-14 object-cover rounded shrink-0 bg-zinc-100"
+                />
+              )}
               <div className="min-w-0">
                 <div className="text-xs font-medium text-muted-foreground truncate">{r.title}</div>
                 <div className="text-xs text-muted-foreground">슬라이드 {r.slide_index + 1} · {r.time_str}</div>
@@ -125,8 +128,9 @@ export default function SlidesPage() {
               className="border rounded-xl overflow-hidden hover:shadow-md transition-shadow group"
             >
               {v.thumbnail ? (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={`${API_BASE}/api/slides/${v.vid_id}/image/${v.thumbnail}`}
+                  src={v.thumbnail}
                   alt={v.title}
                   className="w-full h-40 object-cover bg-zinc-100 group-hover:scale-[1.02] transition-transform"
                 />
