@@ -12,9 +12,12 @@ function sbHeaders() {
   };
 }
 
-async function sbGet(table: string, qs: string = "") {
+async function sbGet(table: string, qs: string = "", rangeEnd = 9999) {
   const url = `${SUPABASE_URL}/rest/v1/${table}${qs ? `?${qs}` : ""}`;
-  const res = await fetch(url, { headers: sbHeaders(), cache: "no-store" });
+  const res = await fetch(url, {
+    headers: { ...sbHeaders(), "Range-Unit": "items", "Range": `0-${rangeEnd}` },
+    cache: "no-store",
+  });
   if (!res.ok) return null;
   return res.json();
 }
