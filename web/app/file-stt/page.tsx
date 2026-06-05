@@ -1,4 +1,5 @@
 "use client";
+export const dynamic = 'force-dynamic';
 import { useState, useRef } from "react";
 import { API_BASE, MODELS, LANGUAGES, TranscribeResult } from "@/lib/types";
 import { useTaskProgress } from "@/lib/useTaskProgress";
