@@ -12,14 +12,28 @@ function sbHeaders() {
   };
 }
 
-async function sbGet(table: string, qs: string = "", rangeEnd = 9999) {
+async function sbGet(table: string, qs: string = "") {
   const url = `${SUPABASE_URL}/rest/v1/${table}${qs ? `?${qs}` : ""}`;
-  const res = await fetch(url, {
-    headers: { ...sbHeaders(), "Range-Unit": "items", "Range": `0-${rangeEnd}` },
-    cache: "no-store",
-  });
+  const res = await fetch(url, { headers: sbHeaders(), cache: "no-store" });
   if (!res.ok) return null;
   return res.json();
+}
+
+async function sbGetAll(table: string, qs: string = ""): Promise<any[]> {
+  const PAGE = 1000;
+  const results: any[] = [];
+  let offset = 0;
+  while (true) {
+    const params = [qs, `limit=${PAGE}`, `offset=${offset}`].filter(Boolean).join("&");
+    const url = `${SUPABASE_URL}/rest/v1/${table}?${params}`;
+    const res = await fetch(url, { headers: sbHeaders(), cache: "no-store" });
+    if (!res.ok) break;
+    const page: any[] = await res.json();
+    results.push(...page);
+    if (page.length < PAGE) break;
+    offset += PAGE;
+  }
+  return results;
 }
 
 export async function GET(req: NextRequest) {
@@ -59,10 +73,10 @@ export async function GET(req: NextRequest) {
     if (channel) conditions.push(`channel=eq.${encodeURIComponent(channel)}`);
     if (collectionId) conditions.push(`collection_id=eq.${encodeURIComponent(collectionId)}`);
     if (search) conditions.push(`title=ilike.*${encodeURIComponent(search)}*`);
-    const qs = [...conditions, "order=processed_at.desc", "limit=2000"].join("&");
+    const baseQs = [...conditions, "order=processed_at.desc"].join("&");
 
     const [videos, collections] = await Promise.all([
-      sbGet("videos", qs),
+      sbGetAll("videos", baseQs),
       sbGet("collections", "order=created_at.desc"),
     ]);
 
