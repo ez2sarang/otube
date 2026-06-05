@@ -305,7 +305,7 @@ async def list_videos(collection_id: str = None, channel: str = None, search: st
                v.upload_date
         FROM stt_analysis.videos v
         {where}
-        ORDER BY COALESCE(v.upload_date, CURRENT_DATE) DESC, v.id DESC
+        ORDER BY v.analyzed_at DESC NULLS LAST, v.id DESC
     """, params or None)
     return list(rows)
 

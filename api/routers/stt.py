@@ -116,9 +116,9 @@ async def transcribe_youtube(req: YoutubeRequest):
 
         # videos 테이블에 저장
         execute("""
-            INSERT INTO stt_analysis.videos (id, title, source, channel, url, duration_sec, text_length, segment_count, language, thumbnail, preview, upload_date)
-            VALUES (%s, %s, 'youtube', %s, %s, %s, %s, 0, %s, %s, %s, %s)
-            ON CONFLICT (id) DO NOTHING
+            INSERT INTO stt_analysis.videos (id, title, source, channel, url, duration_sec, text_length, segment_count, language, thumbnail, preview, upload_date, analyzed_at)
+            VALUES (%s, %s, 'youtube', %s, %s, %s, %s, 0, %s, %s, %s, %s, NOW())
+            ON CONFLICT (id) DO UPDATE SET analyzed_at = NOW()
         """, (
             vid, title, channel_name, url, duration_sec,
             len(corrected_text), language,

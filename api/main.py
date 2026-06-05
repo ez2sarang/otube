@@ -169,6 +169,36 @@ async def recorrect_transcript(video_id: str):
     return {"ok": True, "video_id": video_id, "chars": len(corrected)}
 
 
+@app.get("/api/concurrency")
+async def get_concurrency():
+    """현재 동시 처리 한도 조회"""
+    running = sum(
+        1 for t in task_manager._tasks.values()
+        if t.status == "running"
+    )
+    pending = sum(
+        1 for t in task_manager._tasks.values()
+        if t.status == "pending"
+    )
+    return {
+        "max_concurrent": task_manager.max_concurrent,
+        "running": running,
+        "pending": pending,
+    }
+
+
+@app.post("/api/concurrency")
+async def set_concurrency(body: dict):
+    """동시 처리 한도 변경. Body: {"max_concurrent": N}"""
+    n = body.get("max_concurrent")
+    if not isinstance(n, int) or n < 1:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="max_concurrent must be integer >= 1")
+    prev = task_manager.max_concurrent
+    task_manager.set_max_concurrent(n)
+    return {"prev": prev, "max_concurrent": n}
+
+
 @app.get("/api/health")
 async def health():
     """헬스체크 + 임시 파일 용량 정보"""

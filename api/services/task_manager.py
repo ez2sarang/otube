@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
 
+DEFAULT_MAX_CONCURRENT = 3
+
 
 class TaskStatus(str, Enum):
     PENDING = "pending"
@@ -51,9 +53,30 @@ class TaskState:
 
 
 class TaskManager:
-    def __init__(self):
+    def __init__(self, max_concurrent: int = DEFAULT_MAX_CONCURRENT):
         self._tasks: dict[str, TaskState] = {}
         self._lock = threading.Lock()
+        self._max_concurrent = max_concurrent
+        self._semaphore = threading.Semaphore(max_concurrent)
+
+    @property
+    def max_concurrent(self) -> int:
+        return self._max_concurrent
+
+    def set_max_concurrent(self, n: int) -> None:
+        """동시 처리 수를 런타임에서 변경. 현재 실행 중인 작업에는 영향 없음."""
+        if n < 1:
+            raise ValueError("max_concurrent must be >= 1")
+        with self._lock:
+            diff = n - self._max_concurrent
+            self._max_concurrent = n
+            # 슬롯 추가: release, 슬롯 감소: acquire(non-blocking)로 최대한 회수
+            if diff > 0:
+                for _ in range(diff):
+                    self._semaphore.release()
+            elif diff < 0:
+                for _ in range(-diff):
+                    self._semaphore.acquire(blocking=False)
 
     def create_task(self) -> str:
         task_id = str(uuid.uuid4())[:8]
@@ -65,17 +88,21 @@ class TaskManager:
         return self._tasks.get(task_id)
 
     def run_in_background(self, task_id: str, fn, *args, **kwargs):
-        """함수를 백그라운드 스레드에서 실행"""
+        """세마포어로 동시 실행 수를 제한하며 백그라운드 스레드에서 실행"""
         def wrapper():
             task = self.get_task(task_id)
             if not task:
                 return
+            task.update(TaskStatus.PENDING, f"대기 중 (동시 처리 한도: {self._max_concurrent}개)...")
+            self._semaphore.acquire()
             try:
                 task.update(TaskStatus.RUNNING, "시작 중...")
                 result = fn(task, *args, **kwargs)
                 task.update(TaskStatus.DONE, "완료", 100, result=result)
             except Exception as e:
                 task.update(TaskStatus.ERROR, str(e), error=str(e))
+            finally:
+                self._semaphore.release()
 
         thread = threading.Thread(target=wrapper, daemon=True)
         thread.start()

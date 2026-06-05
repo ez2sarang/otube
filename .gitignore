@@ -1,10 +1,71 @@
+# Python
 .venv/
+venv/
 __pycache__/
 *.pyc
-.DS_Store
-output/
-/tmp/
+*.pyo
+*.pyd
 *.egg-info/
 dist/
 build/
+*.egg
+.eggs/
+pip-wheel-metadata/
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+api/.env
+web/.env.local
+*.secret
+
+# Generated data (all managed in DB)
+data/
+output/
+/tmp/
+backups/
+
+# Node
+node_modules/
+web/node_modules/
+web/.next/
+web/out/
+web/tsconfig.tsbuildinfo
+.npm/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project tooling
 .omc/
+.gstack/
+.serena/
+
+# Logs
+*.log
+logs/
+
+# OCR temp / STT work
+api/ocr_vision
+*.orig
+
+# Collar backups
+*.backup.*
+session-compact.md.backup.*
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# System
+Thumbs.db

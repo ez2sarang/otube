@@ -1,15 +1,13 @@
 """
-플레이리스트 슬라이드 배치 추출기
+플레이리스트 슬라이드 배치 추출기 — DB 저장 모드
 
 사용법:
   python batch_slides_playlist.py <playlist_url> [--analyze]
 
-  --analyze : 각 슬라이드를 LLM으로 분석해서 meta.json에 summary 추가
+  --analyze : 각 슬라이드를 LLM으로 분석해서 DB에 summary 추가
               (시간이 오래 걸림 — 슬라이드 수 × API 호출)
 
-출력: data/slides/{video_id}/
-  slide_0000.jpg, slide_0001.jpg ...
-  meta.json  (슬라이드 목록 + OCR 텍스트 + 선택적 LLM summary)
+저장: stt_analysis.slides (BYTEA) + stt_analysis.videos (slides_count, slides_extracted_at)
 """
 import argparse
 import json
@@ -20,9 +18,6 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(__file__))
-
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-SLIDES_DIR = os.path.join(PROJECT_ROOT, "data", "slides")
 
 
 def get_playlist_videos(playlist_url: str) -> list[dict]:
@@ -72,28 +67,84 @@ def download_video(url: str, tmp_dir: str) -> str:
     return out_path
 
 
+def _slides_in_db(vid_id: str) -> bool:
+    """DB에 해당 영상 슬라이드가 이미 있는지 확인."""
+    from db import query
+    rows = query(
+        "SELECT 1 FROM stt_analysis.slides WHERE video_id = %s LIMIT 1",
+        (vid_id,),
+    )
+    return bool(rows)
+
+
+def save_slides_to_db(vid_id: str, video: dict, slides: list, tmp_slides_dir: str) -> int:
+    """추출된 슬라이드를 DB에 저장. 저장된 슬라이드 수 반환."""
+    from db import execute
+
+    saved = 0
+    for s in slides:
+        img_path = s.get("frame_path") or os.path.join(tmp_slides_dir, s["filename"])
+        if not os.path.exists(img_path):
+            continue
+        with open(img_path, "rb") as f:
+            img_bytes = f.read()
+
+        execute(
+            """
+            INSERT INTO stt_analysis.slides
+                (video_id, slide_index, filename, image_data, frame_time, time_str, ocr_text, llm_summary)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (video_id, slide_index) DO UPDATE SET
+                image_data   = EXCLUDED.image_data,
+                ocr_text     = EXCLUDED.ocr_text,
+                llm_summary  = EXCLUDED.llm_summary
+            """,
+            (
+                vid_id,
+                s["slide_index"],
+                s["filename"],
+                img_bytes,
+                s.get("timestamp"),
+                s.get("time_str"),
+                s.get("ocr_text", ""),
+                s.get("llm_summary", ""),
+            ),
+        )
+        saved += 1
+
+    # videos 테이블에 슬라이드 수 갱신
+    execute(
+        """
+        UPDATE stt_analysis.videos
+        SET slides_count = %s, slides_extracted_at = NOW()
+        WHERE id = %s
+        """,
+        (saved, vid_id),
+    )
+    return saved
+
+
 def process_video(
     video: dict,
     analyze: bool = False,
     scene_threshold: float = 0.15,
     ocr_similarity_threshold: float = 0.85,
 ) -> dict:
-    """단일 영상 처리. 슬라이드 추출 + 선택적 LLM 분석."""
+    """단일 영상 처리. 슬라이드 추출 → DB 저장 (로컬 파일 정리)."""
     from slide_capture import extract_slides_from_video
     from llm_gateway import call_llm_with_image
 
     vid_id = video["id"]
-    slides_dir = os.path.join(SLIDES_DIR, vid_id)
-    meta_path = os.path.join(slides_dir, "meta.json")
 
-    if os.path.exists(meta_path):
+    if _slides_in_db(vid_id):
         return {"status": "skipped", "video_id": vid_id}
 
     tmp_dir = f"/tmp/slides-batch/{vid_id}"
+    tmp_slides_dir = os.path.join(tmp_dir, "slides")
     try:
         video_path = download_video(video["url"], tmp_dir)
         slides = extract_slides_from_video(
-            video_path, slides_dir,
+            video_path, tmp_slides_dir,
             scene_threshold=scene_threshold,
             ocr_similarity_threshold=ocr_similarity_threshold,
         )
@@ -101,65 +152,43 @@ def process_video(
         if not slides and scene_threshold > 0.08:
             retry_threshold = round(scene_threshold / 2, 3)
             slides = extract_slides_from_video(
-                video_path, slides_dir,
+                video_path, tmp_slides_dir,
                 scene_threshold=retry_threshold,
                 ocr_similarity_threshold=ocr_similarity_threshold,
             )
-        shutil.rmtree(tmp_dir, ignore_errors=True)
 
         if analyze and slides:
             task = "이 강의 슬라이드의 핵심 내용을 2~3문장으로 요약해줘."
             for slide in slides:
                 summary = call_llm_with_image(
                     task=task,
-                    image_path=slide["frame_path"],
-                    ocr_text=slide["ocr_text"],
+                    image_path=slide.get("frame_path", os.path.join(tmp_slides_dir, slide["filename"])),
+                    ocr_text=slide.get("ocr_text", ""),
                 )
                 slide["llm_summary"] = summary or ""
-                time.sleep(0.5)  # rate limit 방지
+                time.sleep(0.5)
 
-        meta = {
-            "video_id": vid_id,
-            "title": video.get("title", ""),
-            "url": video.get("url", ""),
-            "total_slides": len(slides),
-            "extracted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "slides": [
-                {
-                    "slide_index": s["slide_index"],
-                    "timestamp": s["timestamp"],
-                    "time_str": s["time_str"],
-                    "filename": s["filename"],
-                    "ocr_text": s["ocr_text"],
-                    **({"llm_summary": s["llm_summary"]} if "llm_summary" in s else {}),
-                }
-                for s in slides
-            ],
-        }
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(meta, f, ensure_ascii=False, indent=2)
-
-        return {"status": "ok", "video_id": vid_id, "slides": len(slides)}
+        saved = save_slides_to_db(vid_id, video, slides, tmp_slides_dir)
+        return {"status": "ok", "video_id": vid_id, "slides": saved}
 
     except Exception as e:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
         return {"status": "error", "video_id": vid_id, "error": str(e)[:120]}
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="플레이리스트 슬라이드 배치 추출")
+    parser = argparse.ArgumentParser(description="플레이리스트 슬라이드 배치 추출 (DB 저장)")
     parser.add_argument("playlist_url", help="YouTube 플레이리스트 URL")
     parser.add_argument("--analyze", action="store_true",
                         help="각 슬라이드를 LLM으로 분석 (느림)")
     parser.add_argument("--scene-threshold", type=float, default=0.15,
                         help="ffmpeg 씬 감지 임계값 (기본: 0.15, 범위: 0.08-0.30)")
     parser.add_argument("--ocr-similarity", type=float, default=0.85,
-                        help="OCR 텍스트 유사도 임계값 (기본: 0.85, MaViLS 2024 기준)")
+                        help="OCR 텍스트 유사도 임계값 (기본: 0.85)")
     args = parser.parse_args()
 
-    os.makedirs(SLIDES_DIR, exist_ok=True)
-
-    print(f"플레이리스트 영상 목록 가져오는 중...")
+    print("플레이리스트 영상 목록 가져오는 중...")
     videos = get_playlist_videos(args.playlist_url)
     if not videos:
         print("영상을 찾을 수 없습니다.")
@@ -181,17 +210,17 @@ def main():
 
         if result["status"] == "ok":
             done += 1
-            print(f"  OK: {result['slides']}개 슬라이드")
+            print(f"  OK: {result['slides']}개 슬라이드 → DB 저장")
         elif result["status"] == "skipped":
             skipped += 1
-            print(f"  SKIP (이미 처리됨)")
+            print("  SKIP (DB에 이미 존재)")
         else:
             failed += 1
             print(f"  FAIL: {result.get('error', '알 수 없는 오류')}")
 
     print(f"\n=== 완료 ===")
     print(f"성공: {done}, 스킵: {skipped}, 실패: {failed} / 전체: {len(videos)}")
-    print(f"결과 위치: {SLIDES_DIR}")
+    print("저장 위치: stt_analysis.slides (DB)")
 
 
 if __name__ == "__main__":

@@ -1,181 +1,201 @@
-"""슬라이드 뷰어 API"""
-import json
-from pathlib import Path
+"""슬라이드 뷰어 API — DB 저장 방식"""
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from db import query
 
 router = APIRouter(prefix="/api")
-
-SLIDES_DIR = Path(__file__).parent.parent.parent / "data" / "slides"
-
-
-def _load_meta(vid_id: str) -> dict:
-    meta_file = SLIDES_DIR / vid_id / "meta.json"
-    if not meta_file.exists():
-        raise HTTPException(status_code=404, detail="Video not found")
-    with open(meta_file, encoding="utf-8") as f:
-        return json.load(f)
 
 
 @router.get("/slides-unprocessed")
 async def list_slides_unprocessed():
     """STT DB에 없는 슬라이드 전용 영상 목록 (HistoryItem 호환 형식)"""
-    try:
-        rows = query("SELECT id FROM stt_analysis.videos")
-        processed_ids = {r["id"] for r in rows}
-    except Exception:
-        processed_ids = set()
-
+    rows = query("""
+        SELECT DISTINCT ON (s.video_id)
+            s.video_id,
+            s.extracted_at,
+            COUNT(s.id) OVER (PARTITION BY s.video_id) AS slide_count
+        FROM stt_analysis.slides s
+        WHERE s.video_id NOT IN (SELECT id FROM stt_analysis.videos)
+        ORDER BY s.video_id, s.extracted_at DESC
+    """)
     result = []
-    if not SLIDES_DIR.exists():
-        return result
-
-    for d in sorted(SLIDES_DIR.iterdir()):
-        if not d.is_dir():
-            continue
-        vid_id = d.name
-        if vid_id in processed_ids:
-            continue
-        meta_file = d / "meta.json"
-        if not meta_file.exists():
-            continue
-        try:
-            with open(meta_file, encoding="utf-8") as f:
-                meta = json.load(f)
-            first_slide = meta["slides"][0]["filename"] if meta.get("slides") else None
-            result.append({
-                "id": vid_id,
-                "title": meta.get("title", vid_id),
-                "channel": None,
-                "url": meta.get("url", f"https://www.youtube.com/watch?v={vid_id}"),
-                "duration_sec": 0,
-                "text_length": 0,
-                "segments": 0,
-                "language": None,
-                "processed_at": meta.get("extracted_at"),
-                "preview": f"슬라이드 {meta.get('total_slides', 0)}장 추출 완료 — STT 미처리",
-                "thumbnail": f"https://img.youtube.com/vi/{vid_id}/mqdefault.jpg",
-                "stt_status": "pending",
-                "slide_count": meta.get("total_slides", 0),
-            })
-        except Exception:
-            continue
+    for r in rows:
+        vid_id = r["video_id"]
+        result.append({
+            "id": vid_id,
+            "title": vid_id,
+            "channel": None,
+            "url": f"https://www.youtube.com/watch?v={vid_id}",
+            "duration_sec": 0,
+            "text_length": 0,
+            "segments": 0,
+            "language": None,
+            "processed_at": r["extracted_at"].isoformat() if r.get("extracted_at") else None,
+            "preview": f"슬라이드 {r['slide_count']}장 추출 완료 — STT 미처리",
+            "thumbnail": f"https://img.youtube.com/vi/{vid_id}/mqdefault.jpg",
+            "stt_status": "pending",
+            "slide_count": r["slide_count"],
+        })
     return result
 
 
 @router.get("/slides/search")
 async def search_slides(q: str = ""):
-    """전체 슬라이드 OCR 텍스트 검색 (무료, 로컬)"""
+    """전체 슬라이드 OCR 텍스트 검색"""
     if not q.strip():
         return []
-    q_lower = q.lower()
-    results = []
-    if not SLIDES_DIR.exists():
-        return results
-    for d in sorted(SLIDES_DIR.iterdir()):
-        if not d.is_dir():
-            continue
-        meta_file = d / "meta.json"
-        if not meta_file.exists():
-            continue
-        try:
-            with open(meta_file, encoding="utf-8") as f:
-                meta = json.load(f)
-            for slide in meta.get("slides", []):
-                ocr = slide.get("ocr_text", "")
-                if q_lower in ocr.lower():
-                    results.append({
-                        "vid_id": meta.get("video_id", d.name),
-                        "title": meta.get("title", d.name),
-                        "slide_index": slide["slide_index"],
-                        "filename": slide["filename"],
-                        "time_str": slide["time_str"],
-                        "ocr_text": ocr,
-                        "match_excerpt": _excerpt(ocr, q_lower),
-                    })
-        except Exception:
-            continue
-    return results
+    rows = query(
+        """
+        SELECT s.video_id, v.title, s.slide_index, s.filename, s.time_str, s.ocr_text
+        FROM stt_analysis.slides s
+        LEFT JOIN stt_analysis.videos v ON v.id = s.video_id
+        WHERE s.ocr_text ILIKE %s
+        ORDER BY s.video_id, s.slide_index
+        LIMIT 200
+        """,
+        (f"%{q}%",),
+    )
+    return [
+        {
+            "vid_id": r["video_id"],
+            "title": r["title"] or r["video_id"],
+            "slide_index": r["slide_index"],
+            "filename": r["filename"],
+            "time_str": r["time_str"],
+            "ocr_text": r["ocr_text"] or "",
+            "match_excerpt": _excerpt(r["ocr_text"] or "", q),
+        }
+        for r in rows
+    ]
 
 
 @router.get("/slides")
 async def list_videos():
     """모든 영상 목록 + 슬라이드 수"""
-    if not SLIDES_DIR.exists():
-        return []
-    result = []
-    for d in sorted(SLIDES_DIR.iterdir()):
-        if not d.is_dir():
-            continue
-        meta_file = d / "meta.json"
-        if not meta_file.exists():
-            continue
-        try:
-            with open(meta_file, encoding="utf-8") as f:
-                meta = json.load(f)
-            result.append({
-                "vid_id": meta.get("video_id", d.name),
-                "title": meta.get("title", d.name),
-                "url": meta.get("url", ""),
-                "total_slides": meta.get("total_slides", 0),
-                "extracted_at": meta.get("extracted_at", ""),
-                "thumbnail": meta["slides"][0]["filename"] if meta.get("slides") else None,
-            })
-        except Exception:
-            continue
-    return result
+    rows = query("""
+        SELECT
+            s.video_id,
+            v.title,
+            v.url,
+            COUNT(s.id) AS total_slides,
+            MAX(s.extracted_at) AS extracted_at,
+            MIN(s.slide_index) AS first_idx
+        FROM stt_analysis.slides s
+        LEFT JOIN stt_analysis.videos v ON v.id = s.video_id
+        GROUP BY s.video_id, v.title, v.url
+        ORDER BY MAX(s.extracted_at) DESC
+    """)
+    return [
+        {
+            "vid_id": r["video_id"],
+            "title": r["title"] or r["video_id"],
+            "url": r["url"] or f"https://www.youtube.com/watch?v={r['video_id']}",
+            "total_slides": r["total_slides"],
+            "extracted_at": r["extracted_at"].isoformat() if r.get("extracted_at") else "",
+            "thumbnail": f"/api/slides/{r['video_id']}/image/0" if r["total_slides"] > 0 else None,
+        }
+        for r in rows
+    ]
 
 
 @router.get("/slides/{vid_id}")
 async def get_video_slides(vid_id: str):
-    """특정 영상의 슬라이드 목록 (OCR 텍스트 포함)"""
-    return _load_meta(vid_id)
+    """특정 영상의 슬라이드 목록 (OCR 텍스트 포함, 이미지 제외)"""
+    rows = query(
+        """
+        SELECT slide_index, filename, frame_time, time_str, ocr_text, llm_summary, extracted_at
+        FROM stt_analysis.slides
+        WHERE video_id = %s
+        ORDER BY slide_index
+        """,
+        (vid_id,),
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    vid_rows = query(
+        "SELECT title, url FROM stt_analysis.videos WHERE id = %s",
+        (vid_id,),
+    )
+    title = vid_rows[0]["title"] if vid_rows else vid_id
+    url = vid_rows[0]["url"] if vid_rows else f"https://www.youtube.com/watch?v={vid_id}"
+
+    return {
+        "video_id": vid_id,
+        "title": title,
+        "url": url,
+        "total_slides": len(rows),
+        "extracted_at": rows[0]["extracted_at"].isoformat() if rows and rows[0].get("extracted_at") else "",
+        "slides": [
+            {
+                "slide_index": r["slide_index"],
+                "timestamp": r["frame_time"],
+                "time_str": r["time_str"],
+                "filename": r["filename"],
+                "ocr_text": r["ocr_text"] or "",
+                "llm_summary": r["llm_summary"] or "",
+            }
+            for r in rows
+        ],
+    }
 
 
 @router.get("/slides/{vid_id}/image/{filename}")
 async def get_slide_image(vid_id: str, filename: str):
-    """슬라이드 이미지 파일 서빙"""
-    # 경로 순회 방지
+    """슬라이드 이미지를 DB에서 반환 (filename 또는 slide_index 모두 허용)"""
     if ".." in filename or "/" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
-    img_path = SLIDES_DIR / vid_id / filename
-    if not img_path.exists() or img_path.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+
+    # filename이 숫자면 slide_index로 조회, 아니면 filename으로 조회
+    if filename.isdigit():
+        rows = query(
+            "SELECT image_data FROM stt_analysis.slides WHERE video_id = %s AND slide_index = %s",
+            (vid_id, int(filename)),
+        )
+    else:
+        rows = query(
+            "SELECT image_data FROM stt_analysis.slides WHERE video_id = %s AND filename = %s",
+            (vid_id, filename),
+        )
+    if not rows or not rows[0]["image_data"]:
         raise HTTPException(status_code=404, detail="Image not found")
-    return FileResponse(img_path, media_type="image/jpeg")
+    return Response(content=bytes(rows[0]["image_data"]), media_type="image/jpeg")
 
 
 @router.delete("/slides/{vid_id}/slide/{slide_index}")
 async def delete_slide(vid_id: str, slide_index: int):
-    """특정 슬라이드 삭제: JPG 파일 제거 + meta.json 갱신"""
-    meta = _load_meta(vid_id)
-    slides = meta.get("slides", [])
-
-    target = next((s for s in slides if s["slide_index"] == slide_index), None)
-    if target is None:
+    """특정 슬라이드 DB에서 삭제"""
+    from db import execute
+    rows = query(
+        "SELECT id FROM stt_analysis.slides WHERE video_id = %s AND slide_index = %s",
+        (vid_id, slide_index),
+    )
+    if not rows:
         raise HTTPException(status_code=404, detail="Slide not found")
 
-    # 파일 삭제
-    img_path = SLIDES_DIR / vid_id / target["filename"]
-    if img_path.exists():
-        img_path.unlink()
+    execute(
+        "DELETE FROM stt_analysis.slides WHERE video_id = %s AND slide_index = %s",
+        (vid_id, slide_index),
+    )
 
-    # meta.json 갱신
-    meta["slides"] = [s for s in slides if s["slide_index"] != slide_index]
-    meta["total_slides"] = len(meta["slides"])
+    remaining = query(
+        "SELECT COUNT(*) AS cnt FROM stt_analysis.slides WHERE video_id = %s",
+        (vid_id,),
+    )
+    total = remaining[0]["cnt"] if remaining else 0
 
-    meta_file = SLIDES_DIR / vid_id / "meta.json"
-    with open(meta_file, "w", encoding="utf-8") as f:
-        import json as _json
-        _json.dump(meta, f, ensure_ascii=False, indent=2)
+    execute(
+        "UPDATE stt_analysis.videos SET slides_count = %s WHERE id = %s",
+        (total, vid_id),
+    )
 
-    return {"ok": True, "total_slides": meta["total_slides"]}
+    return {"ok": True, "total_slides": total}
 
 
-def _excerpt(text: str, query: str, radius: int = 80) -> str:
-    idx = text.lower().find(query)
+def _excerpt(text: str, query_str: str, radius: int = 80) -> str:
+    idx = text.lower().find(query_str.lower())
     if idx < 0:
         return text[:160]
     start = max(0, idx - radius)
-    end = min(len(text), idx + len(query) + radius)
+    end = min(len(text), idx + len(query_str) + radius)
     return ("..." if start > 0 else "") + text[start:end] + ("..." if end < len(text) else "")
