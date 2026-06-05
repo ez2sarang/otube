@@ -36,6 +36,8 @@ function fmtDur(sec: number) {
   return h > 0 ? `${h}시간 ${m}분` : `${m}분`;
 }
 
+const IS_PRODUCTION = process.env.NEXT_PUBLIC_APP_ENV === "production";
+
 export default function HistoryPageClient() {
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -398,6 +400,8 @@ export default function HistoryPageClient() {
             <Button
               size="sm"
               variant="outline"
+              disabled={IS_PRODUCTION}
+              title={IS_PRODUCTION ? "서비스 준비 중입니다" : undefined}
               onClick={() => { setTaskPanelOpen(!taskPanelOpen); setMultiAskOpen(false); }}
             >
               <Briefcase className="w-4 h-4 mr-1.5" />
@@ -408,6 +412,8 @@ export default function HistoryPageClient() {
             <Button
               size="sm"
               variant="secondary"
+              disabled={IS_PRODUCTION}
+              title={IS_PRODUCTION ? "서비스 준비 중입니다" : undefined}
               onClick={() => { setMultiAskOpen(true); setMultiChatMsgs([]); setTaskPanelOpen(false); }}
             >
               <Bot className="w-4 h-4 mr-1.5" />
@@ -419,7 +425,7 @@ export default function HistoryPageClient() {
               <X className="w-3.5 h-3.5 mr-1" />선택 해제
             </Button>
           )}
-          <Button onClick={() => setSttLayerOpen(true)} size="sm">
+          <Button onClick={() => setSttLayerOpen(true)} size="sm" disabled={IS_PRODUCTION} title={IS_PRODUCTION ? "서비스 준비 중입니다" : undefined}>
             <Plus className="w-4 h-4 mr-1.5" />새 변환
           </Button>
         </div>
@@ -539,11 +545,14 @@ export default function HistoryPageClient() {
                 {activePlaylist && playlistVideoIds && playlistVideoIds.size > 0 && (
                   <button
                     onClick={() => {
+                      if (IS_PRODUCTION) return;
                       setSelectedIds(new Set(Array.from(playlistVideoIds)));
                       setMultiChatMsgs([]);
                       setMultiAskOpen(true);
                     }}
-                    className="ml-auto text-xs px-3 py-1 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-1.5 shrink-0"
+                    disabled={IS_PRODUCTION}
+                    title={IS_PRODUCTION ? "서비스 준비 중입니다" : undefined}
+                    className={`ml-auto text-xs px-3 py-1 rounded-full flex items-center gap-1.5 shrink-0 transition-colors ${IS_PRODUCTION ? "bg-muted text-muted-foreground cursor-not-allowed" : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
                   >
                     <Bot className="w-3 h-3" />
                     묶음 AI 질문
@@ -740,7 +749,7 @@ export default function HistoryPageClient() {
                       </div>
                     )}
                     {sttPendingTask.status !== "running" && sttPendingTask.status !== "done" && (
-                      <Button size="sm" onClick={() => startSttForPending(selected)} className="bg-amber-600 hover:bg-amber-700 text-white">
+                      <Button size="sm" onClick={() => startSttForPending(selected)} disabled={IS_PRODUCTION} title={IS_PRODUCTION ? "서비스 준비 중입니다" : undefined} className="bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50">
                         <Mic className="w-3.5 h-3.5 mr-1.5" />STT 분석 시작
                       </Button>
                     )}
@@ -832,12 +841,12 @@ export default function HistoryPageClient() {
                         <Input
                           value={chatInput}
                           onChange={e => setChatInput(e.target.value)}
-                          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendQuestion(); } }}
-                          placeholder="질문을 입력하세요..."
+                          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !IS_PRODUCTION) { e.preventDefault(); sendQuestion(); } }}
+                          placeholder={IS_PRODUCTION ? "서비스 준비 중입니다" : "질문을 입력하세요..."}
                           className="text-xs h-8"
-                          disabled={chatLoading}
+                          disabled={chatLoading || IS_PRODUCTION}
                         />
-                        <Button size="icon" className="h-8 w-8 shrink-0" onClick={sendQuestion} disabled={chatLoading || !chatInput.trim()}>
+                        <Button size="icon" className="h-8 w-8 shrink-0" onClick={sendQuestion} disabled={chatLoading || !chatInput.trim() || IS_PRODUCTION}>
                           {chatLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
                         </Button>
                       </div>
