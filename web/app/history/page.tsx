@@ -1,6 +1,6 @@
 "use client";
 export const dynamic = 'force-dynamic';
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -37,7 +37,7 @@ function fmtDur(sec: number) {
   return h > 0 ? `${h}시간 ${m}분` : `${m}분`;
 }
 
-export default function HistoryPage() {
+function HistoryPage() {
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [filter, setFilter] = useState("all");
@@ -1067,5 +1067,13 @@ export default function HistoryPage() {
         </Card>
       )}
     </div>
+  );
+}
+
+export default function Page() {
+  return (
+    <Suspense>
+      <HistoryPage />
+    </Suspense>
   );
 }

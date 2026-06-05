@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, Suspense } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { API_BASE } from "@/lib/types";
@@ -25,7 +25,7 @@ interface VideoMeta {
   slides: Slide[];
 }
 
-export default function SlideViewerPage() {
+function SlideViewerPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const vid_id = params.vid_id as string;
@@ -206,5 +206,13 @@ export default function SlideViewerPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function Page() {
+  return (
+    <Suspense>
+      <SlideViewerPage />
+    </Suspense>
   );
 }
