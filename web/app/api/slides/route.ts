@@ -5,47 +5,57 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const SCHEMA = process.env.SUPABASE_SCHEMA || "stt_analysis";
 const STORAGE_BUCKET = "slide-images";
 
-export async function GET() {
-  const headers = {
+function sbHeaders() {
+  return {
     "apikey": SUPABASE_KEY,
     "Authorization": `Bearer ${SUPABASE_KEY}`,
     "Accept-Profile": SCHEMA,
-    "Range": "0-9999",
-    "Range-Unit": "items",
   };
+}
 
-  // slides 테이블에서 video_id별 집계
-  const [slidesRes, videosRes] = await Promise.all([
-    fetch(
-      `${SUPABASE_URL}/rest/v1/slides?select=video_id,slide_index,filename,extracted_at&order=video_id.asc`,
-      { headers, cache: "no-store" }
-    ),
-    fetch(
-      `${SUPABASE_URL}/rest/v1/videos?select=id,title,url,thumbnail&slides_count=gt.0`,
-      { headers, cache: "no-store" }
-    ),
-  ]);
-
-  if (!slidesRes.ok || !videosRes.ok) {
-    return NextResponse.json([], { status: 200 });
+async function sbGetAll(table: string, qs: string = ""): Promise<any[]> {
+  const PAGE = 1000;
+  const results: any[] = [];
+  let offset = 0;
+  while (true) {
+    const params = [qs, `limit=${PAGE}`, `offset=${offset}`].filter(Boolean).join("&");
+    const url = `${SUPABASE_URL}/rest/v1/${table}?${params}`;
+    const res = await fetch(url, { headers: sbHeaders(), cache: "no-store" });
+    if (!res.ok) break;
+    const page: any[] = await res.json();
+    results.push(...page);
+    if (page.length < PAGE) break;
+    offset += PAGE;
   }
+  return results;
+}
 
-  const slides: any[] = await slidesRes.json();
-  const videos: any[] = await videosRes.json();
+export async function GET() {
+  const allSlides = await sbGetAll(
+    "slides",
+    "select=video_id,slide_index,filename,extracted_at&order=video_id.asc,slide_index.asc"
+  );
+
+  // slides에 등장하는 video_id로만 영상 정보 조회
+  const videoIds = [...new Set(allSlides.map((s: any) => s.video_id))];
+  let videos: any[] = [];
+  if (videoIds.length > 0) {
+    const idFilter = videoIds.map(id => encodeURIComponent(id)).join(",");
+    videos = await sbGetAll("videos", `select=id,title,url,thumbnail&id=in.(${idFilter})`);
+  }
 
   const videoMap = new Map(videos.map((v: any) => [v.id, v]));
+  const publicBase = `${SUPABASE_URL}/storage/v1/object/public/${STORAGE_BUCKET}`;
 
   // video_id별 집계
-  const groupMap = new Map<string, { total: number; thumbnail_filename: string; extracted_at: string }>();
-  for (const s of slides) {
-    const g = groupMap.get(s.video_id) || { total: 0, thumbnail_filename: s.filename, extracted_at: s.extracted_at };
-    g.total++;
-    if (s.slide_index === 0) g.thumbnail_filename = s.filename;
-    if (!groupMap.has(s.video_id)) groupMap.set(s.video_id, g);
-    else groupMap.get(s.video_id)!.total++;
+  const groupMap = new Map<string, { total: number; first_filename: string; extracted_at: string }>();
+  for (const s of allSlides) {
+    if (!groupMap.has(s.video_id)) {
+      groupMap.set(s.video_id, { total: 1, first_filename: s.filename, extracted_at: s.extracted_at });
+    } else {
+      groupMap.get(s.video_id)!.total++;
+    }
   }
-
-  const publicBase = `${SUPABASE_URL}/storage/v1/object/public/${STORAGE_BUCKET}`;
 
   const result = Array.from(groupMap.entries())
     .map(([vid_id, g]) => {
@@ -56,7 +66,7 @@ export async function GET() {
         url: video?.url || "",
         total_slides: g.total,
         extracted_at: g.extracted_at,
-        thumbnail: video?.thumbnail || `${publicBase}/${vid_id}/${g.thumbnail_filename}`,
+        thumbnail: video?.thumbnail || `${publicBase}/${vid_id}/${g.first_filename}`,
       };
     })
     .sort((a, b) => b.total_slides - a.total_slides);
