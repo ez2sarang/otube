@@ -43,7 +43,7 @@ export default function HistoryPageClient() {
   const [selected, setSelected] = useState<HistoryItem | null>(null);
   const [fullText, setFullText] = useState("");
   const [segments, setSegments] = useState<any[]>([]);
-  const [slides, setSlides] = useState<Array<{slide_index: number; filename: string; time_str: string; ocr_text: string}>>([]);
+  const [slides, setSlides] = useState<Array<{slide_index: number; filename: string; time_str: string; ocr_text: string; image_url?: string}>>([]);
   const [textView, setTextView] = useState<"full" | "timeline">("timeline");
   const [search, setSearch] = useState("");
   const [collections, setCollections] = useState<any[]>([]);
@@ -173,7 +173,7 @@ export default function HistoryPageClient() {
     setFullText(data.fullText || "");
     if (data.segments) setSegments(data.segments);
     try {
-      const slideRes = await fetch(`${API_BASE}/api/slides/${item.id}`);
+      const slideRes = await fetch(`/api/slides/${item.id}`);
       if (slideRes.ok) {
         const sd = await slideRes.json();
         setSlides(sd.slides || []);
@@ -866,7 +866,7 @@ export default function HistoryPageClient() {
                               <div className="group relative rounded overflow-hidden border hover:border-primary transition-colors cursor-pointer">
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                 <img
-                                  src={`${API_BASE}/api/slides/${selected?.id}/image/${slide.filename}`}
+                                  src={slide.image_url || `${API_BASE}/api/slides/${selected?.id}/image/${slide.filename}`}
                                   alt={`slide ${slide.slide_index}`}
                                   className="w-full aspect-video object-cover"
                                   loading="lazy"

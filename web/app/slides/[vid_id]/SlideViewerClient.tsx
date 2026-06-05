@@ -13,6 +13,7 @@ interface Slide {
   timestamp: number;
   time_str: string;
   filename: string;
+  image_url: string;
   ocr_text: string;
 }
 
@@ -37,7 +38,7 @@ export default function SlideViewerClient() {
   const thumbRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/slides/${vid_id}`)
+    fetch(`/api/slides/${vid_id}`)
       .then((r) => r.json())
       .then((data) => {
         setMeta(data);
@@ -61,7 +62,7 @@ export default function SlideViewerClient() {
     : meta.slides;
 
   const slide = meta.slides[current];
-  const imgUrl = `${API_BASE}/api/slides/${vid_id}/image/${slide.filename}`;
+  const imgUrl = slide.image_url;
 
   function goTo(idx: number) {
     setCurrent(Math.max(0, Math.min(meta!.slides.length - 1, idx)));
@@ -146,7 +147,7 @@ export default function SlideViewerClient() {
                 }`}
               >
                 <img
-                  src={`${API_BASE}/api/slides/${vid_id}/image/${s.filename}`}
+                  src={s.image_url}
                   alt={`thumb ${i}`}
                   className="w-24 h-14 object-cover"
                   loading="lazy"
@@ -183,7 +184,7 @@ export default function SlideViewerClient() {
                   className="flex gap-2 flex-1 text-left min-w-0"
                 >
                   <img
-                    src={`${API_BASE}/api/slides/${vid_id}/image/${s.filename}`}
+                    src={s.image_url}
                     alt=""
                     className="w-16 h-10 object-cover rounded shrink-0 bg-zinc-100"
                     loading="lazy"
