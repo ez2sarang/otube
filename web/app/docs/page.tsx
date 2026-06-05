@@ -67,8 +67,8 @@ export default function DocsPage() {
                 a: ({ node, ...props }) => (
                   <a className="text-primary underline hover:text-primary/80" target="_blank" rel="noopener noreferrer" {...props} />
                 ),
-                code: ({ node, inline, ...props }) => {
-                  if (inline) {
+                code: ({ node, className, ...props }) => {
+                  if (!className) {
                     return <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono" {...props} />;
                   }
                   return <code className="bg-muted p-3 rounded-lg block text-sm font-mono overflow-x-auto my-3" {...props} />;

@@ -62,8 +62,8 @@ const mdComponents = {
   blockquote: ({ children }: React.ComponentProps<"blockquote">) => (
     <blockquote className="border-l-4 border-primary/30 pl-3 py-0.5 my-2 text-sm text-muted-foreground italic bg-muted/30 rounded-r">{children}</blockquote>
   ),
-  code: ({ inline, children, ...props }: React.ComponentProps<"code"> & { inline?: boolean }) =>
-    inline
+  code: ({ children, className, ...props }: React.ComponentProps<"code">) =>
+    !className
       ? <code className="bg-muted px-1 py-0.5 rounded text-xs font-mono text-primary">{children}</code>
       : <code className="block bg-muted rounded p-3 text-xs font-mono whitespace-pre-wrap overflow-x-auto">{children}</code>,
   pre: ({ children }: React.ComponentProps<"pre">) => <pre className="my-2 rounded overflow-hidden">{children}</pre>,
