@@ -344,6 +344,22 @@ async def videos_summary():
     }
 
 
+@router.get("/videos/{video_id}")
+async def get_video(video_id: str):
+    """단일 영상 메타데이터 반환"""
+    row = query_one("""
+        SELECT id, title, channel, url, duration_sec, text_length,
+               segment_count, language, collection_id, thumbnail, preview,
+               upload_date, processed_at, analyzed_at, slides_count
+        FROM stt_analysis.videos
+        WHERE id = %s
+    """, (video_id,))
+    if not row:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Video not found")
+    return dict(row)
+
+
 class AskRequest(BaseModel):
     question: str
     history: list = []  # [{role: "user"|"assistant", content: str}]

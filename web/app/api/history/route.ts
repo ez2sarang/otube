@@ -1,40 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const SUPABASE_URL = process.env.SUPABASE_URL || "https://ydqypyddmugnzaovfdeo.supabase.co";
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-const SCHEMA = process.env.SUPABASE_SCHEMA || "stt_analysis";
-
-function sbHeaders() {
-  return {
-    "apikey": SUPABASE_KEY,
-    "Authorization": `Bearer ${SUPABASE_KEY}`,
-    "Accept-Profile": SCHEMA,
-  };
-}
-
-async function sbGet(table: string, qs: string = "") {
-  const url = `${SUPABASE_URL}/rest/v1/${table}${qs ? `?${qs}` : ""}`;
-  const res = await fetch(url, { headers: sbHeaders(), cache: "no-store" });
-  if (!res.ok) return null;
-  return res.json();
-}
-
-async function sbGetAll(table: string, qs: string = ""): Promise<any[]> {
-  const PAGE = 1000;
-  const results: any[] = [];
-  let offset = 0;
-  while (true) {
-    const params = [qs, `limit=${PAGE}`, `offset=${offset}`].filter(Boolean).join("&");
-    const url = `${SUPABASE_URL}/rest/v1/${table}?${params}`;
-    const res = await fetch(url, { headers: sbHeaders(), cache: "no-store" });
-    if (!res.ok) break;
-    const page: any[] = await res.json();
-    results.push(...page);
-    if (page.length < PAGE) break;
-    offset += PAGE;
-  }
-  return results;
-}
+const API_BASE = process.env.INTERNAL_API_URL || "http://localhost:9102";
 
 export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("id");
@@ -45,13 +11,13 @@ export async function GET(req: NextRequest) {
   try {
     // 단일 영상 상세
     if (id) {
-      const [videoArr, transcriptArr] = await Promise.all([
-        sbGet("videos", `id=eq.${encodeURIComponent(id)}&limit=1`),
-        sbGet("transcripts", `video_id=eq.${encodeURIComponent(id)}&limit=1`),
+      const [videoRes, transcriptRes] = await Promise.all([
+        fetch(`${API_BASE}/api/videos/${encodeURIComponent(id)}`, { cache: "no-store" }),
+        fetch(`${API_BASE}/api/videos/${encodeURIComponent(id)}/transcript`, { cache: "no-store" }),
       ]);
-      const item = Array.isArray(videoArr) && videoArr[0] ? videoArr[0] : null;
-      if (!item) return NextResponse.json({ error: "Not found" }, { status: 404 });
-      const transcript = Array.isArray(transcriptArr) && transcriptArr[0] ? transcriptArr[0] : {};
+      if (!videoRes.ok) return NextResponse.json({ error: "Not found" }, { status: 404 });
+      const item = await videoRes.json();
+      const transcript = transcriptRes.ok ? await transcriptRes.json() : {};
       return NextResponse.json({
         id: item.id,
         title: item.title,
@@ -63,38 +29,36 @@ export async function GET(req: NextRequest) {
         language: item.language,
         processed_at: item.processed_at,
         thumbnail: item.thumbnail,
-        fullText: transcript.corrected_text || transcript.full_text || "",
+        fullText: transcript.correctedText || transcript.fullText || "",
         segments: transcript.segments || [],
       });
     }
 
-    // 필터 조건 조립
-    const conditions: string[] = [];
-    if (channel) conditions.push(`channel=eq.${encodeURIComponent(channel)}`);
-    if (collectionId) conditions.push(`collection_id=eq.${encodeURIComponent(collectionId)}`);
-    if (search) conditions.push(`title=ilike.*${encodeURIComponent(search)}*`);
-    const baseQs = [...conditions, "order=processed_at.desc"].join("&");
+    // 쿼리 파라미터 조립
+    const params = new URLSearchParams();
+    if (channel) params.set("channel", channel);
+    if (collectionId) params.set("collection_id", collectionId);
+    if (search) params.set("search", search);
+    const qs = params.toString();
 
-    const [videos, collections] = await Promise.all([
-      sbGetAll("videos", baseQs),
-      sbGet("collections", "order=created_at.desc"),
+    const [videosRes, summaryRes, collectionsRes] = await Promise.all([
+      fetch(`${API_BASE}/api/videos${qs ? `?${qs}` : ""}`, { cache: "no-store" }),
+      fetch(`${API_BASE}/api/videos/summary`, { cache: "no-store" }),
+      fetch(`${API_BASE}/api/collections`, { cache: "no-store" }),
     ]);
+
+    const videos = videosRes.ok ? await videosRes.json() : [];
+    const summaryRaw = summaryRes.ok ? await summaryRes.json() : null;
+    const collections = collectionsRes.ok ? await collectionsRes.json() : [];
 
     const items = Array.isArray(videos) ? videos : [];
 
-    // 요약 계산
-    const channels: Record<string, { count: number; totalDuration: number; totalChars: number }> = {};
-    let totalDuration = 0, totalChars = 0;
-    for (const v of items) {
-      const ch = v.channel || "unknown";
-      if (!channels[ch]) channels[ch] = { count: 0, totalDuration: 0, totalChars: 0 };
-      channels[ch].count++;
-      channels[ch].totalDuration += v.duration_sec || 0;
-      channels[ch].totalChars += v.text_length || 0;
-      totalDuration += v.duration_sec || 0;
-      totalChars += v.text_length || 0;
-    }
-    const summary = { total: items.length, channels, totalDuration, totalChars };
+    const summary = summaryRaw ? {
+      total: summaryRaw.total || 0,
+      channels: summaryRaw.channels || {},
+      totalDuration: summaryRaw.totalDuration || 0,
+      totalChars: summaryRaw.totalChars || 0,
+    } : null;
 
     const mappedItems = items.map((v: any) => ({
       id: v.id,
